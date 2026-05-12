@@ -1,7 +1,6 @@
 <?php
-
 namespace App\Services\Results;
-
+use App\Services\Results\IssueStateService;
 use App\Enums\ResultIssueSeverity;
 use App\Enums\ResultIssueType;
 use App\Models\ExamScore;
@@ -18,6 +17,15 @@ class ResultMergeService
         protected GradeResolver $gradeResolver,
     ) {
     }
+    protected function insertIssueRows(array $issueRows): void
+    {
+        $issueRows = app(IssueStateService::class)
+            ->filterIssueRowsPreservingResolved($issueRows);
+
+        if ($issueRows !== []) {
+            DB::table('result_issues')->insert($issueRows);
+        }
+    }
 
     public function merge(
         ImportBatch $mergeBatch,
@@ -25,6 +33,8 @@ class ResultMergeService
         ImportBatch $examBatch,
         string $matchBy = 'student_id'
     ): void {
+        app(BatchScoreRevalidationService::class)->revalidateTestBatch($testBatch);
+        app(BatchScoreRevalidationService::class)->revalidateExamBatch($examBatch);
         if (!in_array($matchBy, ['student_id', 'matric_no'], true)) {
             throw new RuntimeException('Invalid matching method selected.');
         }
@@ -146,7 +156,7 @@ class ResultMergeService
                     }
 
                     if ($issueRows !== []) {
-                        DB::table('result_issues')->insert($issueRows);
+                        $this->insertIssueRows($issueRows);
                     }
 
                     $mergeBatch->increment('processed_rows', count($mergedRows));

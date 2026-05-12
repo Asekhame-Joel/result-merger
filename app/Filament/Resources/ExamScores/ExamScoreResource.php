@@ -1,13 +1,23 @@
 <?php
 
 namespace App\Filament\Resources\ExamScores;
-
+use App\Models\TestScore;
 use App\Filament\Resources\ExamScores\Pages\ListExamScores;
 use App\Filament\Resources\ExamScores\Pages\ViewExamScore;
 use App\Models\ExamScore;
 use BackedEnum;
-use Filament\Actions\BulkActionGroup;
+use App\Services\Results\BatchScoreRevalidationService;
+use App\Services\Results\IssueStateService;
 use Filament\Actions\DeleteAction;
+use App\Enums\ImportBatchType;
+use App\Filament\Resources\ExamScores\Pages\CreateExamScore;
+use App\Filament\Resources\ExamScores\Pages\EditExamScore;
+use App\Models\ImportBatch;
+use Filament\Actions\CreateAction;
+use Filament\Actions\EditAction;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TextInput;
+use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\ViewAction;
 use Filament\Infolists\Components\IconEntry;
@@ -39,7 +49,116 @@ class ExamScoreResource extends Resource
     protected static ?string $pluralModelLabel = 'Exam Scores';
 
     protected static ?int $navigationSort = 4;
+    public static function form(Schema $schema): Schema
+    {
+        return $schema
+            ->components([
+                Select::make('import_batch_id')
+                    ->label('Exam Batch')
+                    ->required()
+                    ->searchable()
+                    ->preload()
+                    ->options(fn(): array => ImportBatch::query()
+                        ->where('type', ImportBatchType::Exam)
+                        ->latest('id')
+                        ->pluck('name', 'id')
+                        ->all()),
 
+                Select::make('source_test_score_id')
+                    ->label('Copy Student From Existing Test Record')
+                    ->helperText('Select the student whose exam score is missing. Student details will be filled automatically.')
+                    ->searchable()
+                    ->preload()
+                    ->dehydrated(false)
+                    ->options(fn(): array => TestScore::query()
+                        ->where('is_valid', true)
+                        ->latest('id')
+                        ->get()
+                        ->mapWithKeys(fn(TestScore $testScore): array => [
+                            $testScore->id => trim(
+                                ($testScore->student_id ?: 'No Student ID')
+                                . ' | '
+                                . ($testScore->matric_no ?: 'No Matric No')
+                                . ' | '
+                                . ($testScore->first_name ?: '')
+                                . ' '
+                                . ($testScore->last_name ?: '')
+                                . ' | Test: '
+                                . $testScore->test_score
+                            ),
+                        ])
+                        ->all())
+                    ->live()
+                    ->afterStateUpdated(function ($state, callable $set): void {
+                        if (!$state) {
+                            return;
+                        }
+
+                        $testScore = TestScore::find($state);
+
+                        if (!$testScore) {
+                            return;
+                        }
+
+                        $set('student_id', $testScore->student_id);
+                        $set('matric_no', $testScore->matric_no);
+                        $set('first_name', $testScore->first_name);
+                        $set('last_name', $testScore->last_name);
+                        $set('level', $testScore->level);
+                        $set('college', $testScore->college);
+                        $set('department', $testScore->department);
+                    })
+                    ->visible(fn(string $operation): bool => $operation === 'create'),
+
+                TextInput::make('student_id')
+                    ->label('Student ID')
+                    ->maxLength(255)
+                    ->disabled(fn(string $operation): bool => $operation === 'create')
+                    ->dehydrated(),
+
+                TextInput::make('matric_no')
+                    ->label('Matric No')
+                    ->maxLength(255)
+                    ->disabled(fn(string $operation): bool => $operation === 'create')
+                    ->dehydrated(),
+
+                TextInput::make('first_name')
+                    ->label('First Name')
+                    ->maxLength(255)
+                    ->disabled(fn(string $operation): bool => $operation === 'create')
+                    ->dehydrated(),
+
+                TextInput::make('last_name')
+                    ->label('Last Name')
+                    ->maxLength(255)
+                    ->disabled(fn(string $operation): bool => $operation === 'create')
+                    ->dehydrated(),
+
+                TextInput::make('level')
+                    ->label('Level')
+                    ->maxLength(255)
+                    ->disabled(fn(string $operation): bool => $operation === 'create')
+                    ->dehydrated(),
+
+                TextInput::make('college')
+                    ->label('College')
+                    ->maxLength(255)
+                    ->disabled(fn(string $operation): bool => $operation === 'create')
+                    ->dehydrated(),
+
+                TextInput::make('department')
+                    ->label('Department')
+                    ->maxLength(255)
+                    ->disabled(fn(string $operation): bool => $operation === 'create')
+                    ->dehydrated(),
+
+                TextInput::make('exam_score')
+                    ->label('Exam Score')
+                    ->numeric()
+                    ->required()
+                    ->minValue(0),
+            ]);
+    }
     public static function infolist(Schema $schema): Schema
     {
         return $schema
@@ -196,8 +315,27 @@ class ExamScoreResource extends Resource
             ->recordActions([
                 ViewAction::make(),
 
+                EditAction::make(),
                 DeleteAction::make()
-                    ->requiresConfirmation(),
+                    ->requiresConfirmation()
+                    ->before(function (ExamScore $record): void {
+                        session()->put('deleted_exam_score_id', $record->id);
+                        session()->put('deleted_exam_score_batch_id', $record->import_batch_id);
+                    })
+                    ->after(function (): void {
+                        $examScoreId = session()->pull('deleted_exam_score_id');
+                        $batchId = session()->pull('deleted_exam_score_batch_id');
+
+                        if ($examScoreId) {
+                            app(IssueStateService::class)
+                                ->resolveOpenIssuesForDeletedExamScore((int) $examScoreId);
+                        }
+
+                        if ($batchId) {
+                            app(BatchScoreRevalidationService::class)
+                                ->revalidateExamBatch((int) $batchId);
+                        }
+                    }),
             ])
             ->toolbarActions([
                 BulkActionGroup::make([
@@ -217,7 +355,9 @@ class ExamScoreResource extends Resource
     {
         return [
             'index' => ListExamScores::route('/'),
+            'create' => CreateExamScore::route('/create'),
             'view' => ViewExamScore::route('/{record}'),
+            'edit' => EditExamScore::route('/{record}/edit'),
         ];
     }
 }

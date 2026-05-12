@@ -5,10 +5,24 @@ namespace App\Filament\Resources\ResultIssues;
 use App\Enums\ResultIssueSeverity;
 use App\Enums\ResultIssueStatus;
 use App\Enums\ResultIssueType;
+use App\Filament\Resources\ExamScores\ExamScoreResource;
 use App\Filament\Resources\ResultIssues\Pages\ListResultIssues;
 use App\Filament\Resources\ResultIssues\Pages\ViewResultIssue;
+use App\Filament\Resources\TestScores\TestScoreResource;
 use App\Models\ResultIssue;
+use App\Enums\ImportBatchType;
+use App\Models\ExamScore;
+use App\Models\ImportBatch;
+use App\Models\TestScore;
+use App\Services\Results\ManualScoreValidationService;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
+use Illuminate\Support\Facades\DB;
 use BackedEnum;
+use Filament\Actions\BulkAction;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Auth;
 use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteAction;
@@ -22,9 +36,9 @@ use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
+use Filament\Tables\Grouping\Group;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Facades\Auth;
 use UnitEnum;
 
 class ResultIssueResource extends Resource
@@ -53,19 +67,39 @@ class ResultIssueResource extends Resource
                         TextEntry::make('type')
                             ->label('Type')
                             ->badge()
-                            ->formatStateUsing(fn(ResultIssueType|string|null $state): string => $state instanceof ResultIssueType ? $state->label() : ucfirst((string) $state)),
+                            ->formatStateUsing(
+                                fn(ResultIssueType|string|null $state): string => $state instanceof ResultIssueType
+                                ? $state->label()
+                                : ucfirst((string) $state)
+                            ),
 
                         TextEntry::make('severity')
                             ->label('Severity')
                             ->badge()
-                            ->color(fn(ResultIssueSeverity|string|null $state): string => $state instanceof ResultIssueSeverity ? $state->color() : 'gray')
-                            ->formatStateUsing(fn(ResultIssueSeverity|string|null $state): string => $state instanceof ResultIssueSeverity ? $state->label() : ucfirst((string) $state)),
+                            ->color(
+                                fn(ResultIssueSeverity|string|null $state): string => $state instanceof ResultIssueSeverity
+                                ? $state->color()
+                                : 'gray'
+                            )
+                            ->formatStateUsing(
+                                fn(ResultIssueSeverity|string|null $state): string => $state instanceof ResultIssueSeverity
+                                ? $state->label()
+                                : ucfirst((string) $state)
+                            ),
 
                         TextEntry::make('status')
                             ->label('Status')
                             ->badge()
-                            ->color(fn(ResultIssueStatus|string|null $state): string => $state instanceof ResultIssueStatus ? $state->color() : 'gray')
-                            ->formatStateUsing(fn(ResultIssueStatus|string|null $state): string => $state instanceof ResultIssueStatus ? $state->label() : ucfirst((string) $state)),
+                            ->color(
+                                fn(ResultIssueStatus|string|null $state): string => $state instanceof ResultIssueStatus
+                                ? $state->color()
+                                : 'gray'
+                            )
+                            ->formatStateUsing(
+                                fn(ResultIssueStatus|string|null $state): string => $state instanceof ResultIssueStatus
+                                ? $state->label()
+                                : ucfirst((string) $state)
+                            ),
 
                         TextEntry::make('message')
                             ->label('Message')
@@ -135,27 +169,60 @@ class ResultIssueResource extends Resource
     {
         return $table
             ->defaultSort('id', 'desc')
+            ->groups([
+                Group::make('type')
+                    ->label('Issue Type')
+                    ->collapsible(),
+
+                Group::make('importBatch.name')
+                    ->label('Batch')
+                    ->collapsible(),
+
+                Group::make('department')
+                    ->label('Department')
+                    ->collapsible(),
+            ])
             ->columns([
                 TextColumn::make('type')
                     ->label('Type')
                     ->badge()
                     ->searchable()
                     ->sortable()
-                    ->formatStateUsing(fn(ResultIssueType|string|null $state): string => $state instanceof ResultIssueType ? $state->label() : ucfirst((string) $state)),
+                    ->formatStateUsing(
+                        fn(ResultIssueType|string|null $state): string => $state instanceof ResultIssueType
+                        ? $state->label()
+                        : ucfirst((string) $state)
+                    ),
 
                 TextColumn::make('severity')
                     ->label('Severity')
                     ->badge()
-                    ->color(fn(ResultIssueSeverity|string|null $state): string => $state instanceof ResultIssueSeverity ? $state->color() : 'gray')
+                    ->color(
+                        fn(ResultIssueSeverity|string|null $state): string => $state instanceof ResultIssueSeverity
+                        ? $state->color()
+                        : 'gray'
+                    )
                     ->sortable()
-                    ->formatStateUsing(fn(ResultIssueSeverity|string|null $state): string => $state instanceof ResultIssueSeverity ? $state->label() : ucfirst((string) $state)),
+                    ->formatStateUsing(
+                        fn(ResultIssueSeverity|string|null $state): string => $state instanceof ResultIssueSeverity
+                        ? $state->label()
+                        : ucfirst((string) $state)
+                    ),
 
                 TextColumn::make('status')
                     ->label('Status')
                     ->badge()
-                    ->color(fn(ResultIssueStatus|string|null $state): string => $state instanceof ResultIssueStatus ? $state->color() : 'gray')
+                    ->color(
+                        fn(ResultIssueStatus|string|null $state): string => $state instanceof ResultIssueStatus
+                        ? $state->color()
+                        : 'gray'
+                    )
                     ->sortable()
-                    ->formatStateUsing(fn(ResultIssueStatus|string|null $state): string => $state instanceof ResultIssueStatus ? $state->label() : ucfirst((string) $state)),
+                    ->formatStateUsing(
+                        fn(ResultIssueStatus|string|null $state): string => $state instanceof ResultIssueStatus
+                        ? $state->label()
+                        : ucfirst((string) $state)
+                    ),
 
                 TextColumn::make('message')
                     ->label('Message')
@@ -173,6 +240,40 @@ class ResultIssueResource extends Resource
                     ->searchable()
                     ->sortable()
                     ->placeholder('Missing'),
+                TextColumn::make('score_source')
+                    ->label('Source')
+                    ->state(function (ResultIssue $record): string {
+                        if ($record->test_score_id) {
+                            return 'Test';
+                        }
+
+                        if ($record->exam_score_id) {
+                            return 'Exam';
+                        }
+
+                        return 'N/A';
+                    })
+                    ->badge()
+                    ->color(fn(string $state): string => match ($state) {
+                        'Test' => 'info',
+                        'Exam' => 'warning',
+                        default => 'gray',
+                    })
+                    ->toggleable(),
+                TextColumn::make('testScore.test_score')
+                    ->label('Test Score')
+                    ->numeric(decimalPlaces: 2)
+                    ->sortable()
+                    ->placeholder('N/A')
+                    ->toggleable(),
+
+                TextColumn::make('examScore.exam_score')
+                    ->label('Exam Score')
+                    ->numeric(decimalPlaces: 2)
+                    ->sortable()
+                    ->placeholder('N/A')
+                    ->toggleable(),
+
 
                 TextColumn::make('level')
                     ->label('Level')
@@ -226,12 +327,46 @@ class ResultIssueResource extends Resource
             ->recordActions([
                 ViewAction::make(),
 
+                Action::make('editTestScore')
+                    ->label('Edit Test')
+                    ->icon(Heroicon::OutlinedPencilSquare)
+                    ->color('info')
+                    ->visible(fn(ResultIssue $record): bool => filled($record->test_score_id))
+                    ->url(fn(ResultIssue $record): string => TestScoreResource::getUrl('edit', [
+                        'record' => $record->test_score_id,
+                    ])),
+
+                Action::make('editExamScore')
+                    ->label('Edit Exam')
+                    ->icon(Heroicon::OutlinedPencilSquare)
+                    ->color('info')
+                    ->visible(fn(ResultIssue $record): bool => filled($record->exam_score_id))
+                    ->url(fn(ResultIssue $record): string => ExamScoreResource::getUrl('edit', [
+                        'record' => $record->exam_score_id,
+                    ])),
+
+                Action::make('addTestScore')
+                    ->label('Add Test')
+                    ->icon(Heroicon::OutlinedPlusCircle)
+                    ->color('success')
+                    ->visible(fn(ResultIssue $record): bool => self::issueTypeIs($record, ResultIssueType::MissingTestRecord))
+                    ->url(fn(): string => TestScoreResource::getUrl('create')),
+
+                Action::make('addExamScore')
+                    ->label('Add Exam')
+                    ->icon(Heroicon::OutlinedPlusCircle)
+                    ->color('success')
+                    ->visible(fn(ResultIssue $record): bool => self::issueTypeIs($record, ResultIssueType::MissingExamRecord))
+                    ->url(fn(): string => ExamScoreResource::getUrl('create')),
+
                 Action::make('resolve')
                     ->label('Resolve')
                     ->icon(Heroicon::OutlinedCheckCircle)
                     ->color('success')
                     ->visible(fn(ResultIssue $record): bool => $record->status !== ResultIssueStatus::Resolved)
                     ->requiresConfirmation()
+                    ->modalHeading('Mark issue as resolved?')
+                    ->modalDescription('Use this after you have fixed the real test or exam score record.')
                     ->action(function (ResultIssue $record): void {
                         $record->resolve(Auth::id());
 
@@ -247,6 +382,8 @@ class ResultIssueResource extends Resource
                     ->color('gray')
                     ->visible(fn(ResultIssue $record): bool => $record->status !== ResultIssueStatus::Ignored)
                     ->requiresConfirmation()
+                    ->modalHeading('Ignore this issue?')
+                    ->modalDescription('Use this only when the issue is known and should not block your workflow.')
                     ->action(function (ResultIssue $record): void {
                         $record->ignore(Auth::id());
 
@@ -261,10 +398,265 @@ class ResultIssueResource extends Resource
             ])
             ->toolbarActions([
                 BulkActionGroup::make([
+                    BulkAction::make('assignTestScoreToSelected')
+                        ->label('Assign Test Score')
+                        ->icon(Heroicon::OutlinedPlusCircle)
+                        ->color('success')
+                        ->schema([
+                            Select::make('import_batch_id')
+                                ->label('Test Batch')
+                                ->required()
+                                ->searchable()
+                                ->preload()
+                                ->options(fn(): array => ImportBatch::query()
+                                    ->where('type', ImportBatchType::Test)
+                                    ->latest('id')
+                                    ->pluck('name', 'id')
+                                    ->all()),
+
+                            TextInput::make('test_score')
+                                ->label('Test Score To Assign')
+                                ->numeric()
+                                ->required()
+                                ->minValue(0),
+
+                            Toggle::make('resolve_after_create')
+                                ->label('Mark selected issues as resolved after creating scores')
+                                ->default(true),
+                        ])
+                        ->requiresConfirmation()
+                        ->modalHeading('Assign one test score to selected missing test issues?')
+                        ->modalDescription('This will create test score records for selected Missing Test issues using the student details from the related exam records.')
+                        ->action(function (Collection $records, array $data): void {
+                            self::bulkAssignMissingTestScores($records, $data);
+                        }),
+
+                    BulkAction::make('assignExamScoreToSelected')
+                        ->label('Assign Exam Score')
+                        ->icon(Heroicon::OutlinedPlusCircle)
+                        ->color('success')
+                        ->schema([
+                            Select::make('import_batch_id')
+                                ->label('Exam Batch')
+                                ->required()
+                                ->searchable()
+                                ->preload()
+                                ->options(fn(): array => ImportBatch::query()
+                                    ->where('type', ImportBatchType::Exam)
+                                    ->latest('id')
+                                    ->pluck('name', 'id')
+                                    ->all()),
+
+                            TextInput::make('exam_score')
+                                ->label('Exam Score To Assign')
+                                ->numeric()
+                                ->required()
+                                ->minValue(0),
+
+                            Toggle::make('resolve_after_create')
+                                ->label('Mark selected issues as resolved after creating scores')
+                                ->default(true),
+                        ])
+                        ->requiresConfirmation()
+                        ->modalHeading('Assign one exam score to selected missing exam issues?')
+                        ->modalDescription('This will create exam score records for selected Missing Exam issues using the student details from the related test records.')
+                        ->action(function (Collection $records, array $data): void {
+                            self::bulkAssignMissingExamScores($records, $data);
+                        }),
+                    BulkAction::make('resolveSelected')
+                        ->label('Resolve Selected')
+                        ->icon(Heroicon::OutlinedCheckCircle)
+                        ->color('success')
+                        ->requiresConfirmation()
+                        ->modalHeading('Resolve selected issues?')
+                        ->modalDescription('Only do this after you have fixed the related records.')
+                        ->action(function (Collection $records): void {
+                            $records->each(function (ResultIssue $record): void {
+                                $record->resolve(Auth::id());
+                            });
+
+                            Notification::make()
+                                ->title('Selected issues resolved')
+                                ->success()
+                                ->send();
+                        }),
+
+                    BulkAction::make('ignoreSelected')
+                        ->label('Ignore Selected')
+                        ->icon(Heroicon::OutlinedEyeSlash)
+                        ->color('gray')
+                        ->requiresConfirmation()
+                        ->modalHeading('Ignore selected issues?')
+                        ->modalDescription('Ignored issues remain in the system but are marked as intentionally skipped.')
+                        ->action(function (Collection $records): void {
+                            $records->each(function (ResultIssue $record): void {
+                                $record->ignore(Auth::id());
+                            });
+
+                            Notification::make()
+                                ->title('Selected issues ignored')
+                                ->success()
+                                ->send();
+                        }),
+
                     DeleteBulkAction::make()
                         ->requiresConfirmation(),
                 ]),
             ]);
+    }
+
+    protected static function issueTypeIs(ResultIssue $record, ResultIssueType $type): bool
+    {
+        if ($record->type instanceof ResultIssueType) {
+            return $record->type === $type;
+        }
+
+        return $record->type === $type->value;
+    }
+    protected static function bulkAssignMissingTestScores(Collection $records, array $data): void
+    {
+        $created = 0;
+        $skipped = 0;
+
+        DB::transaction(function () use ($records, $data, &$created, &$skipped): void {
+            foreach ($records as $issue) {
+                if (!self::issueTypeIs($issue, ResultIssueType::MissingTestRecord)) {
+                    $skipped++;
+
+                    continue;
+                }
+
+                $examScore = $issue->examScore;
+
+                if (!$examScore && $issue->exam_score_id) {
+                    $examScore = ExamScore::query()->find($issue->exam_score_id);
+                }
+
+                if (!$examScore) {
+                    $skipped++;
+
+                    continue;
+                }
+
+                $alreadyExists = TestScore::query()
+                    ->where('import_batch_id', $data['import_batch_id'])
+                    ->where(function ($query) use ($examScore): void {
+                        $query
+                            ->when($examScore->student_id, fn($query) => $query->orWhere('student_id', $examScore->student_id))
+                            ->when($examScore->matric_no, fn($query) => $query->orWhere('matric_no', $examScore->matric_no));
+                    })
+                    ->exists();
+
+                if ($alreadyExists) {
+                    $skipped++;
+
+                    continue;
+                }
+
+                $scoreData = [
+                    'import_batch_id' => $data['import_batch_id'],
+                    'student_id' => $examScore->student_id,
+                    'matric_no' => $examScore->matric_no,
+                    'first_name' => $examScore->first_name,
+                    'last_name' => $examScore->last_name,
+                    'level' => $examScore->level,
+                    'college' => $examScore->college,
+                    'department' => $examScore->department,
+                    'test_score' => $data['test_score'],
+                    'row_number' => null,
+                ];
+
+                $scoreData = app(ManualScoreValidationService::class)
+                    ->prepareTestScoreData($scoreData);
+
+                TestScore::query()->create($scoreData);
+
+                if ((bool) ($data['resolve_after_create'] ?? true)) {
+                    $issue->resolve(Auth::id());
+                }
+
+                $created++;
+            }
+        });
+
+        Notification::make()
+            ->title('Test scores assigned')
+            ->body("Created {$created} test score record(s). Skipped {$skipped}.")
+            ->success()
+            ->send();
+    }
+
+    protected static function bulkAssignMissingExamScores(Collection $records, array $data): void
+    {
+        $created = 0;
+        $skipped = 0;
+
+        DB::transaction(function () use ($records, $data, &$created, &$skipped): void {
+            foreach ($records as $issue) {
+                if (!self::issueTypeIs($issue, ResultIssueType::MissingExamRecord)) {
+                    $skipped++;
+
+                    continue;
+                }
+
+                $testScore = $issue->testScore;
+
+                if (!$testScore && $issue->test_score_id) {
+                    $testScore = TestScore::query()->find($issue->test_score_id);
+                }
+
+                if (!$testScore) {
+                    $skipped++;
+
+                    continue;
+                }
+
+                $alreadyExists = ExamScore::query()
+                    ->where('import_batch_id', $data['import_batch_id'])
+                    ->where(function ($query) use ($testScore): void {
+                        $query
+                            ->when($testScore->student_id, fn($query) => $query->orWhere('student_id', $testScore->student_id))
+                            ->when($testScore->matric_no, fn($query) => $query->orWhere('matric_no', $testScore->matric_no));
+                    })
+                    ->exists();
+
+                if ($alreadyExists) {
+                    $skipped++;
+
+                    continue;
+                }
+
+                $scoreData = [
+                    'import_batch_id' => $data['import_batch_id'],
+                    'student_id' => $testScore->student_id,
+                    'matric_no' => $testScore->matric_no,
+                    'first_name' => $testScore->first_name,
+                    'last_name' => $testScore->last_name,
+                    'level' => $testScore->level,
+                    'college' => $testScore->college,
+                    'department' => $testScore->department,
+                    'exam_score' => $data['exam_score'],
+                    'row_number' => null,
+                ];
+
+                $scoreData = app(ManualScoreValidationService::class)
+                    ->prepareExamScoreData($scoreData);
+
+                ExamScore::query()->create($scoreData);
+
+                if ((bool) ($data['resolve_after_create'] ?? true)) {
+                    $issue->resolve(Auth::id());
+                }
+
+                $created++;
+            }
+        });
+
+        Notification::make()
+            ->title('Exam scores assigned')
+            ->body("Created {$created} exam score record(s). Skipped {$skipped}.")
+            ->success()
+            ->send();
     }
 
     public static function getEloquentQuery(): Builder
