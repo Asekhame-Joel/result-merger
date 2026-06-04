@@ -1,21 +1,21 @@
 <?php
 
 namespace App\Filament\Pages;
-use App\Services\Imports\ImportUploadGuard;
-use Throwable;
+
 use App\Enums\ImportBatchStatus;
 use App\Enums\ImportBatchType;
 use App\Jobs\ProcessExamScoreImportJob;
 use App\Models\ImportBatch;
+use App\Services\Imports\ImportUploadGuard;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\FileUpload;
-use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Computed;
+use Throwable;
 use UnitEnum;
 
 class UploadExamScores extends Page
@@ -49,12 +49,6 @@ class UploadExamScores extends Page
                 ->icon(Heroicon::OutlinedArrowUpTray)
                 ->color('primary')
                 ->schema([
-                    TextInput::make('name')
-                        ->label('Batch Name')
-                        ->required()
-                        ->maxLength(255)
-                        ->default('Exam Scores Upload - ' . now()->format('Y-m-d H:i')),
-
                     FileUpload::make('file_path')
                         ->label('CSV File')
                         ->required()
@@ -76,6 +70,9 @@ class UploadExamScores extends Page
                         $filePath = $data['file_path'];
                         $disk = 'local';
 
+                        $originalFileName = basename($filePath);
+                        $batchName = pathinfo($originalFileName, PATHINFO_FILENAME);
+
                         $guard = app(ImportUploadGuard::class);
 
                         $fileHash = $guard->validateCsvUpload($disk, $filePath);
@@ -83,14 +80,14 @@ class UploadExamScores extends Page
                         $guard->preventAnyDuplicate(ImportBatchType::Exam, $fileHash);
 
                         $batch = ImportBatch::create([
-                            'name' => $data['name'],
+                            'name' => $batchName,
                             'type' => ImportBatchType::Exam,
                             'status' => ImportBatchStatus::Pending,
                             'file_path' => $filePath,
                             'file_hash' => $fileHash,
                             'disk' => $disk,
-                            'file_name' => basename($filePath),
-                            'original_file_name' => basename($filePath),
+                            'file_name' => $originalFileName,
+                            'original_file_name' => $originalFileName,
                             'created_by' => Auth::id(),
                         ]);
 
@@ -98,7 +95,7 @@ class UploadExamScores extends Page
 
                         Notification::make()
                             ->title('Exam score import queued')
-                            ->body('The CSV file has been uploaded and will be processed by the queue worker.')
+                            ->body("{$originalFileName} has been uploaded and will be processed by the queue worker.")
                             ->success()
                             ->send();
                     } catch (Throwable $exception) {

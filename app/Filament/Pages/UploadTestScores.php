@@ -1,23 +1,21 @@
 <?php
 
 namespace App\Filament\Pages;
-use Livewire\Attributes\Computed;
+
 use App\Enums\ImportBatchStatus;
 use App\Enums\ImportBatchType;
 use App\Jobs\ProcessTestScoreImportJob;
 use App\Models\ImportBatch;
-use BackedEnum;
 use App\Services\Imports\ImportUploadGuard;
-use Throwable;
+use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\FileUpload;
-use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
+use Livewire\Attributes\Computed;
+use Throwable;
 use UnitEnum;
 
 class UploadTestScores extends Page
@@ -33,6 +31,7 @@ class UploadTestScores extends Page
     protected static ?int $navigationSort = 1;
 
     protected string $view = 'filament.pages.upload-test-scores';
+
     #[Computed]
     public function latestTestBatch(): ?ImportBatch
     {
@@ -41,20 +40,15 @@ class UploadTestScores extends Page
             ->latest('id')
             ->first();
     }
+
     protected function getHeaderActions(): array
     {
         return [
             Action::make('uploadTestScores')
-                ->label('Upload Excel File')
+                ->label('Upload CSV File')
                 ->icon(Heroicon::OutlinedArrowUpTray)
                 ->color('primary')
                 ->schema([
-                    TextInput::make('name')
-                        ->label('Batch Name')
-                        ->required()
-                        ->maxLength(255)
-                        ->default('Test Scores Upload - ' . now()->format('Y-m-d H:i')),
-
                     FileUpload::make('file_path')
                         ->label('CSV File')
                         ->required()
@@ -76,6 +70,9 @@ class UploadTestScores extends Page
                         $filePath = $data['file_path'];
                         $disk = 'local';
 
+                        $originalFileName = basename($filePath);
+                        $batchName = pathinfo($originalFileName, PATHINFO_FILENAME);
+
                         $guard = app(ImportUploadGuard::class);
 
                         $fileHash = $guard->validateCsvUpload($disk, $filePath);
@@ -83,14 +80,14 @@ class UploadTestScores extends Page
                         $guard->preventAnyDuplicate(ImportBatchType::Test, $fileHash);
 
                         $batch = ImportBatch::create([
-                            'name' => $data['name'],
+                            'name' => $batchName,
                             'type' => ImportBatchType::Test,
                             'status' => ImportBatchStatus::Pending,
                             'file_path' => $filePath,
                             'file_hash' => $fileHash,
                             'disk' => $disk,
-                            'file_name' => basename($filePath),
-                            'original_file_name' => basename($filePath),
+                            'file_name' => $originalFileName,
+                            'original_file_name' => $originalFileName,
                             'created_by' => Auth::id(),
                         ]);
 
@@ -98,7 +95,7 @@ class UploadTestScores extends Page
 
                         Notification::make()
                             ->title('Test score import queued')
-                            ->body('The CSV file has been uploaded and will be processed by the queue worker.')
+                            ->body("{$originalFileName} has been uploaded and will be processed by the queue worker.")
                             ->success()
                             ->send();
                     } catch (Throwable $exception) {

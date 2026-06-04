@@ -1,7 +1,10 @@
 <?php
 
-namespace App\Filament\Resources\ResultIssues;
 
+namespace App\Filament\Resources\ResultIssues;
+use App\Services\Results\IssueSourceRecordUpdateService;
+use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
 use App\Enums\ResultIssueSeverity;
 use App\Enums\ResultIssueStatus;
 use App\Enums\ResultIssueType;
@@ -16,8 +19,6 @@ use App\Models\ImportBatch;
 use App\Models\TestScore;
 use App\Services\Results\ManualScoreValidationService;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\TextInput;
-use Filament\Forms\Components\Toggle;
 use Illuminate\Support\Facades\DB;
 use BackedEnum;
 use Filament\Actions\BulkAction;
@@ -326,7 +327,80 @@ class ResultIssueResource extends Resource
             ])
             ->recordActions([
                 ViewAction::make(),
+                Action::make('editSourceRecord')
+                    ->label('Edit Source')
+                    ->icon(Heroicon::OutlinedPencilSquare)
+                    ->color('warning')
+                    ->visible(fn(ResultIssue $record): bool => filled($record->test_score_id) || filled($record->exam_score_id))
+                    ->modalHeading(fn(ResultIssue $record): string => $record->test_score_id
+                        ? 'Edit Linked Test Score Record'
+                        : 'Edit Linked Exam Score Record')
+                    ->modalDescription('Update the real source record directly from this issue. Changes will reflect in Test Scores or Exam Scores.')
+                    ->fillForm(function (ResultIssue $record): array {
+                        $source = $record->testScore ?: $record->examScore;
 
+                        return [
+                            'student_id' => $source?->student_id,
+                            'matric_no' => $source?->matric_no,
+                            'first_name' => $source?->first_name,
+                            'last_name' => $source?->last_name,
+                            'level' => $source?->level,
+                            'college' => $source?->college,
+                            'department' => $source?->department,
+                            'score' => $record->testScore
+                                ? $record->testScore->test_score
+                                : $record->examScore?->exam_score,
+                            'resolve_after_save' => true,
+                        ];
+                    })
+                    ->schema([
+                        TextInput::make('student_id')
+                            ->label('Student ID')
+                            ->maxLength(255),
+
+                        TextInput::make('matric_no')
+                            ->label('Matric No')
+                            ->maxLength(255),
+
+                        TextInput::make('first_name')
+                            ->label('First Name')
+                            ->maxLength(255),
+
+                        TextInput::make('last_name')
+                            ->label('Last Name')
+                            ->maxLength(255),
+
+                        TextInput::make('level')
+                            ->label('Level')
+                            ->maxLength(255),
+
+                        TextInput::make('college')
+                            ->label('College')
+                            ->maxLength(255),
+
+                        TextInput::make('department')
+                            ->label('Department')
+                            ->maxLength(255),
+
+                        TextInput::make('score')
+                            ->label(fn(ResultIssue $record): string => $record->test_score_id ? 'Test Score' : 'Exam Score')
+                            ->numeric()
+                            ->minValue(0),
+
+                        Toggle::make('resolve_after_save')
+                            ->label('Mark issue as resolved after saving')
+                            ->default(true),
+                    ])
+                    ->action(function (ResultIssue $record, array $data): void {
+                        app(IssueSourceRecordUpdateService::class)
+                            ->updateFromIssue($record, $data, Auth::id());
+
+                        Notification::make()
+                            ->title('Source record updated')
+                            ->body('The linked test or exam score record has been updated and revalidated.')
+                            ->success()
+                            ->send();
+                    }),
                 Action::make('editTestScore')
                     ->label('Edit Test')
                     ->icon(Heroicon::OutlinedPencilSquare)

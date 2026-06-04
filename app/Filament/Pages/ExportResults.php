@@ -6,15 +6,16 @@ use App\Enums\ImportBatchStatus;
 use App\Enums\ImportBatchType;
 use App\Models\ImportBatch;
 use App\Services\Exports\MergedResultCsvExportService;
+use App\Services\Exports\MergedResultExcelExportService;
 use BackedEnum;
 use Filament\Actions\Action;
-use App\Services\Exports\MergedResultExcelExportService;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use UnitEnum;
 
 class ExportResults extends Page
@@ -32,6 +33,7 @@ class ExportResults extends Page
     protected string $view = 'filament.pages.export-results';
 
     public ?string $latestExportPath = null;
+
     protected function getHeaderActions(): array
     {
         return [
@@ -81,7 +83,8 @@ class ExportResults extends Page
                 ->schema([
                     Select::make('merge_batch_id')
                         ->label('Merge Batch')
-                        ->helperText('Leave empty to export all merged results.')
+                        ->helperText('Select the merge batch to export. The Excel filename will be generated from the uploaded file name.')
+                        ->required()
                         ->searchable()
                         ->preload()
                         ->options(fn(): array => ImportBatch::query()
@@ -91,26 +94,20 @@ class ExportResults extends Page
                                 ImportBatchStatus::CompletedWithIssues,
                             ])
                             ->latest('id')
-                            ->pluck('name', 'id')
+                            ->get()
+                            ->mapWithKeys(fn(ImportBatch $batch): array => [
+                                $batch->id => $batch->name . ' - ' . $batch->created_at->format('M d, Y H:i'),
+                            ])
                             ->all()),
 
                     Toggle::make('valid_only')
                         ->label('Export valid results only')
-                        ->default(false),
+                        ->default(false)
+                        ->helperText('This option is currently used by CSV export. Excel export uses the selected merge batch.'),
                 ])
-                ->action(function (array $data): void {
-                    $path = app(MergedResultExcelExportService::class)->export(
-                        mergeBatchId: $data['merge_batch_id'] ?? null,
-                        validOnly: (bool) ($data['valid_only'] ?? false),
-                    );
-
-                    $this->latestExportPath = $path;
-
-                    Notification::make()
-                        ->title('Excel export completed')
-                        ->body('Your merged results Excel file has been generated.')
-                        ->success()
-                        ->send();
+                ->action(function (array $data): BinaryFileResponse {
+                    return app(MergedResultExcelExportService::class)
+                        ->download($data['merge_batch_id'] ?? null);
                 }),
         ];
     }

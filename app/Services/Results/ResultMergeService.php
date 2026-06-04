@@ -1,6 +1,7 @@
 <?php
+
 namespace App\Services\Results;
-use App\Services\Results\IssueStateService;
+
 use App\Enums\ResultIssueSeverity;
 use App\Enums\ResultIssueType;
 use App\Models\ExamScore;
@@ -17,6 +18,7 @@ class ResultMergeService
         protected GradeResolver $gradeResolver,
     ) {
     }
+
     protected function insertIssueRows(array $issueRows): void
     {
         $issueRows = app(IssueStateService::class)
@@ -35,6 +37,7 @@ class ResultMergeService
     ): void {
         app(BatchScoreRevalidationService::class)->revalidateTestBatch($testBatch);
         app(BatchScoreRevalidationService::class)->revalidateExamBatch($examBatch);
+
         if (!in_array($matchBy, ['student_id', 'matric_no'], true)) {
             throw new RuntimeException('Invalid matching method selected.');
         }
@@ -44,6 +47,15 @@ class ResultMergeService
             ->where('is_valid', true)
             ->count();
 
+        $validExamCount = ExamScore::query()
+            ->where('import_batch_id', $examBatch->id)
+            ->where('is_valid', true)
+            ->count();
+
+        if ($validTestCount === 0 && $validExamCount === 0) {
+            throw new RuntimeException('No valid test or exam scores found in the selected batches.');
+        }
+
         $mergeBatch->update([
             'total_rows' => $validTestCount,
             'processed_rows' => 0,
@@ -51,10 +63,6 @@ class ResultMergeService
             'failed_rows' => 0,
             'issue_count' => 0,
         ]);
-
-        if ($validTestCount === 0) {
-            throw new RuntimeException('No valid test scores found in the selected test batch.');
-        }
 
         MergedResult::query()
             ->where('merge_batch_id', $mergeBatch->id)
@@ -87,64 +95,27 @@ class ResultMergeService
                             now: $now
                         );
 
-                        $issueRows[] = $this->issueRow(
-                            mergeBatch: $mergeBatch,
-                            testScore: $testScore,
-                            examScore: null,
-                            type: ResultIssueType::MissingExamRecord,
-                            message: "No matching exam record found using {$matchBy}.",
-                            now: $now
-                        );
-
                         continue;
                     }
 
-                    $testValue = (float) $testScore->test_score;
-                    $examValue = (float) $examScore->exam_score;
-                    $totalScore = $testValue + $examValue;
+                    $mergedRow = $this->mergedRowWithTestAndExam(
+                        mergeBatch: $mergeBatch,
+                        testBatch: $testBatch,
+                        examBatch: $examBatch,
+                        testScore: $testScore,
+                        examScore: $examScore,
+                        now: $now
+                    );
 
-                    $totalValidation = $this->validationService->validateTotalScore($totalScore);
-                    $grade = $this->gradeResolver->resolve($totalScore);
+                    $mergedRows[] = $mergedRow;
 
-                    $isValid = $totalValidation['valid'];
-
-                    $mergedRows[] = [
-                        'test_score_id' => $testScore->id,
-                        'exam_score_id' => $examScore->id,
-                        'test_import_batch_id' => $testBatch->id,
-                        'exam_import_batch_id' => $examBatch->id,
-                        'merge_batch_id' => $mergeBatch->id,
-
-                        'student_id' => $testScore->student_id ?: $examScore->student_id,
-                        'matric_no' => $testScore->matric_no ?: $examScore->matric_no,
-                        'first_name' => $testScore->first_name ?: $examScore->first_name,
-                        'last_name' => $testScore->last_name ?: $examScore->last_name,
-                        'level' => $testScore->level ?: $examScore->level,
-                        'college' => $testScore->college ?: $examScore->college,
-                        'department' => $testScore->department ?: $examScore->department,
-
-                        'test_score' => $testValue,
-                        'exam_score' => $examValue,
-                        'total_score' => $totalScore,
-
-                        'grade' => $grade['grade'],
-                        'remark' => $grade['remark'],
-                        'grade_point' => $grade['grade_point'],
-
-                        'is_valid' => $isValid,
-                        'validation_message' => $isValid ? null : $totalValidation['message'],
-
-                        'created_at' => $now,
-                        'updated_at' => $now,
-                    ];
-
-                    if (!$totalValidation['valid']) {
+                    if (!$mergedRow['is_valid']) {
                         $issueRows[] = $this->issueRow(
                             mergeBatch: $mergeBatch,
                             testScore: $testScore,
                             examScore: $examScore,
                             type: ResultIssueType::InvalidTotalScore,
-                            message: $totalValidation['message'],
+                            message: $mergedRow['validation_message'] ?: 'Invalid total score.',
                             now: $now
                         );
                     }
@@ -163,7 +134,7 @@ class ResultMergeService
                 });
             });
 
-        $this->createIssuesForExamRecordsWithoutTest(
+        $this->createZeroTestMergedRowsForExamOnlyRecords(
             mergeBatch: $mergeBatch,
             testBatch: $testBatch,
             examBatch: $examBatch,
@@ -194,6 +165,52 @@ class ResultMergeService
             ->all();
     }
 
+    protected function mergedRowWithTestAndExam(
+        ImportBatch $mergeBatch,
+        ImportBatch $testBatch,
+        ImportBatch $examBatch,
+        TestScore $testScore,
+        ExamScore $examScore,
+        mixed $now
+    ): array {
+        $testValue = (float) $testScore->test_score;
+        $examValue = (float) $examScore->exam_score;
+        $totalScore = $testValue + $examValue;
+
+        $totalValidation = $this->validationService->validateTotalScore($totalScore);
+        $grade = $this->gradeResolver->resolve($totalScore);
+
+        return [
+            'test_score_id' => $testScore->id,
+            'exam_score_id' => $examScore->id,
+            'test_import_batch_id' => $testBatch->id,
+            'exam_import_batch_id' => $examBatch->id,
+            'merge_batch_id' => $mergeBatch->id,
+
+            'student_id' => $testScore->student_id ?: $examScore->student_id,
+            'matric_no' => $testScore->matric_no ?: $examScore->matric_no,
+            'first_name' => $testScore->first_name ?: $examScore->first_name,
+            'last_name' => $testScore->last_name ?: $examScore->last_name,
+            'level' => $testScore->level ?: $examScore->level,
+            'college' => $testScore->college ?: $examScore->college,
+            'department' => $testScore->department ?: $examScore->department,
+
+            'test_score' => $testValue,
+            'exam_score' => $examValue,
+            'total_score' => $totalScore,
+
+            'grade' => $grade['grade'],
+            'remark' => $grade['remark'],
+            'grade_point' => $grade['grade_point'],
+
+            'is_valid' => $totalValidation['valid'],
+            'validation_message' => $totalValidation['valid'] ? null : $totalValidation['message'],
+
+            'created_at' => $now,
+            'updated_at' => $now,
+        ];
+    }
+
     protected function mergedRowWithoutExam(
         ImportBatch $mergeBatch,
         ImportBatch $testBatch,
@@ -201,6 +218,13 @@ class ResultMergeService
         TestScore $testScore,
         mixed $now
     ): array {
+        $testScoreValue = (float) $testScore->test_score;
+        $examScoreValue = 0.0;
+        $totalScore = $testScoreValue + $examScoreValue;
+
+        $totalValidation = $this->validationService->validateTotalScore($totalScore);
+        $grade = $this->gradeResolver->resolve($totalScore);
+
         return [
             'test_score_id' => $testScore->id,
             'exam_score_id' => null,
@@ -216,23 +240,68 @@ class ResultMergeService
             'college' => $testScore->college,
             'department' => $testScore->department,
 
-            'test_score' => $testScore->test_score,
-            'exam_score' => null,
-            'total_score' => null,
+            'test_score' => $testScoreValue,
+            'exam_score' => $examScoreValue,
+            'total_score' => $totalScore,
 
-            'grade' => null,
-            'remark' => null,
-            'grade_point' => null,
+            'grade' => $grade['grade'],
+            'remark' => $grade['remark'],
+            'grade_point' => $grade['grade_point'],
 
-            'is_valid' => false,
-            'validation_message' => 'No matching exam record found.',
+            'is_valid' => $totalValidation['valid'],
+            'validation_message' => $totalValidation['valid'] ? null : $totalValidation['message'],
 
             'created_at' => $now,
             'updated_at' => $now,
         ];
     }
 
-    protected function createIssuesForExamRecordsWithoutTest(
+    protected function mergedRowWithoutTest(
+        ImportBatch $mergeBatch,
+        ImportBatch $testBatch,
+        ImportBatch $examBatch,
+        ExamScore $examScore,
+        mixed $now
+    ): array {
+        $testScoreValue = 0.0;
+        $examScoreValue = (float) $examScore->exam_score;
+        $totalScore = $testScoreValue + $examScoreValue;
+
+        $totalValidation = $this->validationService->validateTotalScore($totalScore);
+        $grade = $this->gradeResolver->resolve($totalScore);
+
+        return [
+            'test_score_id' => null,
+            'exam_score_id' => $examScore->id,
+            'test_import_batch_id' => $testBatch->id,
+            'exam_import_batch_id' => $examBatch->id,
+            'merge_batch_id' => $mergeBatch->id,
+
+            'student_id' => $examScore->student_id,
+            'matric_no' => $examScore->matric_no,
+            'first_name' => $examScore->first_name,
+            'last_name' => $examScore->last_name,
+            'level' => $examScore->level,
+            'college' => $examScore->college,
+            'department' => $examScore->department,
+
+            'test_score' => $testScoreValue,
+            'exam_score' => $examScoreValue,
+            'total_score' => $totalScore,
+
+            'grade' => $grade['grade'],
+            'remark' => $grade['remark'],
+            'grade_point' => $grade['grade_point'],
+
+            'is_valid' => $totalValidation['valid'],
+            'validation_message' => $totalValidation['valid'] ? null : $totalValidation['message'],
+
+            'created_at' => $now,
+            'updated_at' => $now,
+        ];
+    }
+
+    protected function createZeroTestMergedRowsForExamOnlyRecords(
         ImportBatch $mergeBatch,
         ImportBatch $testBatch,
         ImportBatch $examBatch,
@@ -252,20 +321,24 @@ class ResultMergeService
             ->whereNotNull($matchBy)
             ->whereNotIn($matchBy, $testValues)
             ->orderBy('id')
-            ->chunkById(500, function ($examScores) use ($mergeBatch, $matchBy): void {
+            ->chunkById(500, function ($examScores) use ($mergeBatch, $testBatch, $examBatch): void {
                 $now = now();
 
-                $issues = $examScores->map(fn(ExamScore $examScore): array => $this->issueRow(
-                    mergeBatch: $mergeBatch,
-                    testScore: null,
-                    examScore: $examScore,
-                    type: ResultIssueType::MissingTestRecord,
-                    message: "No matching test record found using {$matchBy}.",
-                    now: $now
-                ))->all();
+                $mergedRows = [];
 
-                if ($issues !== []) {
-                    DB::table('result_issues')->insert($issues);
+                foreach ($examScores as $examScore) {
+                    $mergedRows[] = $this->mergedRowWithoutTest(
+                        mergeBatch: $mergeBatch,
+                        testBatch: $testBatch,
+                        examBatch: $examBatch,
+                        examScore: $examScore,
+                        now: $now
+                    );
+                }
+
+                if ($mergedRows !== []) {
+                    DB::table('merged_results')->insert($mergedRows);
+                    $mergeBatch->increment('processed_rows', count($mergedRows));
                 }
             });
     }
@@ -303,6 +376,10 @@ class ResultMergeService
     protected function finalizeBatchCounts(ImportBatch $mergeBatch): void
     {
         $mergeBatch->update([
+            'total_rows' => DB::table('merged_results')
+                ->where('merge_batch_id', $mergeBatch->id)
+                ->count(),
+
             'processed_rows' => DB::table('merged_results')
                 ->where('merge_batch_id', $mergeBatch->id)
                 ->count(),
@@ -319,6 +396,7 @@ class ResultMergeService
 
             'issue_count' => DB::table('result_issues')
                 ->where('import_batch_id', $mergeBatch->id)
+                ->where('status', 'open')
                 ->count(),
         ]);
     }
