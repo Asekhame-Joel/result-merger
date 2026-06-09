@@ -8,14 +8,14 @@ use App\Models\ImportBatch;
 use App\Services\Results\ResultValidationService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use RuntimeException;
 use SplFileObject;
-
+use App\Services\Imports\ImportHeaderMapper;
 class TestScoreCsvImportService
 {
     public function __construct(
-        protected ResultValidationService $validationService
+        protected ResultValidationService $validationService,
+        protected ImportHeaderMapper $headerMapper,
     ) {
     }
 
@@ -50,7 +50,9 @@ class TestScoreCsvImportService
                 $headers = $this->normalizeHeaders($row);
 
                 if (!$this->hasRequiredHeaders($headers)) {
-                    throw new RuntimeException('Invalid CSV headers. Required headers include student_id or matric_no, and test_score.');
+                    throw new RuntimeException(
+                        'Invalid CSV headers. Required headers include student_id or matric_no, and a test score column. Accepted examples: student_id, ID number, Mat Number, First name, Last name, Department, Quiz..., Test Score.'
+                    );
                 }
 
                 continue;
@@ -78,13 +80,15 @@ class TestScoreCsvImportService
 
             $messages = [];
 
-            $identifierValidation = $this->validationService->validateRequiredStudentIdentifier($studentId, $matricNo);
+            $identifierValidation = $this->validationService
+                ->validateRequiredStudentIdentifier($studentId, $matricNo);
 
             if (!$identifierValidation['valid']) {
                 $messages[] = $identifierValidation['message'];
             }
 
-            $scoreValidation = $this->validationService->validateTestScore($testScoreValue);
+            $scoreValidation = $this->validationService
+                ->validateTestScore($testScoreValue);
 
             if (!$scoreValidation['valid']) {
                 $messages[] = $scoreValidation['message'];
@@ -159,7 +163,9 @@ class TestScoreCsvImportService
                     'processed_rows' => $processedRows,
                     'successful_rows' => $successfulRows,
                     'failed_rows' => $failedRows,
-                    'issue_count' => DB::table('result_issues')->where('import_batch_id', $batch->id)->count(),
+                    'issue_count' => DB::table('result_issues')
+                        ->where('import_batch_id', $batch->id)
+                        ->count(),
                 ]);
 
                 $testScoreRows = [];
@@ -189,10 +195,20 @@ class TestScoreCsvImportService
 
         $batch->update([
             'total_rows' => $totalRows,
-            'processed_rows' => DB::table('test_scores')->where('import_batch_id', $batch->id)->count(),
-            'successful_rows' => DB::table('test_scores')->where('import_batch_id', $batch->id)->where('is_valid', true)->count(),
-            'failed_rows' => DB::table('test_scores')->where('import_batch_id', $batch->id)->where('is_valid', false)->count(),
-            'issue_count' => DB::table('result_issues')->where('import_batch_id', $batch->id)->count(),
+            'processed_rows' => DB::table('test_scores')
+                ->where('import_batch_id', $batch->id)
+                ->count(),
+            'successful_rows' => DB::table('test_scores')
+                ->where('import_batch_id', $batch->id)
+                ->where('is_valid', true)
+                ->count(),
+            'failed_rows' => DB::table('test_scores')
+                ->where('import_batch_id', $batch->id)
+                ->where('is_valid', false)
+                ->count(),
+            'issue_count' => DB::table('result_issues')
+                ->where('import_batch_id', $batch->id)
+                ->count(),
         ]);
     }
 
@@ -213,8 +229,12 @@ class TestScoreCsvImportService
         );
     }
 
-    protected function detectDuplicateColumn(ImportBatch $batch, string $column, ResultIssueType $type, string $message): void
-    {
+    protected function detectDuplicateColumn(
+        ImportBatch $batch,
+        string $column,
+        ResultIssueType $type,
+        string $message
+    ): void {
         $duplicates = DB::table('test_scores')
             ->select($column)
             ->where('import_batch_id', $batch->id)
@@ -277,15 +297,7 @@ class TestScoreCsvImportService
 
     protected function normalizeHeaders(array $headers): array
     {
-        return collect($headers)
-            ->map(fn($header): string => Str::of((string) $header)
-                ->trim()
-                ->lower()
-                ->replace([' ', '-', '.', '/', '\\'], '_')
-                ->replaceMatches('/_+/', '_')
-                ->trim('_')
-                ->toString())
-            ->all();
+        return $this->headerMapper->normalizeHeaders($headers, 'test');
     }
 
     protected function hasRequiredHeaders(array $headers): bool
@@ -300,6 +312,10 @@ class TestScoreCsvImportService
 
         foreach ($headers as $index => $header) {
             if ($header === '') {
+                continue;
+            }
+
+            if (array_key_exists($header, $combined) && filled($combined[$header])) {
                 continue;
             }
 

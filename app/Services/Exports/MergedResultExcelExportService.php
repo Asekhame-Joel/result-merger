@@ -165,15 +165,23 @@ class MergedResultExcelExportService
         $name = pathinfo($fileName, PATHINFO_FILENAME);
 
         $name = str($name)
+            // Remove common upload/result labels from the filename.
             ->replaceMatches('/\b(test|exam|scores|score|upload|uploaded|sheet)\b/i', '')
+
+            // Remove standalone CA from the course name.
+            // Example: "IUO-GST113 Use of Library, Study Skill and ICT CA"
+            // becomes: "IUO-GST113 Use of Library, Study Skill and ICT"
+            ->replaceMatches('/\bCA\b/i', '')
+
+            // Clean spacing and trailing separators.
             ->replaceMatches('/\s+/', ' ')
             ->replaceMatches('/\s*-\s*$/', '')
+            ->replaceMatches('/\s*,\s*$/', '')
             ->trim()
             ->toString();
 
         return $name !== '' ? $name : 'Merged Results';
     }
-
     protected function makeExportFileName(string $exportTitle): string
     {
         $fileName = "{$exportTitle} MERGE RESULT.xlsx";
