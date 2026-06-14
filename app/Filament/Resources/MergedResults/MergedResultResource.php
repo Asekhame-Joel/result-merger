@@ -1,26 +1,22 @@
 <?php
 
 namespace App\Filament\Resources\MergedResults;
-use Illuminate\Database\Eloquent\Builder;
-use App\Filament\Resources\MergedResults\Pages\CreateMergedResult;
+
 use App\Filament\Resources\MergedResults\Pages\EditMergedResult;
 use App\Filament\Resources\MergedResults\Pages\ListMergedResults;
-use App\Filament\Resources\MergedResults\Schemas\MergedResultForm;
-use App\Filament\Resources\MergedResults\Tables\MergedResultsTable;
-use App\Models\MergedResult;
-use Filament\Tables\Filters\SelectFilter;
-use Filament\Tables\Filters\TernaryFilter;
 use App\Filament\Resources\MergedResults\Pages\ViewMergedResult;
+use App\Models\MergedResult;
 use BackedEnum;
-use Filament\Tables\Columns\TextColumn;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\TextInput;
+use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
-use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\BadgeColumn;
+use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 
 class MergedResultResource extends Resource
@@ -28,6 +24,13 @@ class MergedResultResource extends Resource
     protected static ?string $model = MergedResult::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+
+    protected static ?string $navigationLabel = 'Merged Results';
+
+    protected static ?string $modelLabel = 'Merged Result';
+
+    protected static ?string $pluralModelLabel = 'Merged Results';
+
     public static function form(Schema $schema): Schema
     {
         return $schema
@@ -37,216 +40,175 @@ class MergedResultResource extends Resource
                     ->schema([
                         TextInput::make('student_id')
                             ->label('Student ID')
-                            ->disabled()
-                            ->dehydrated(false),
+                            ->disabled(),
 
                         TextInput::make('matric_no')
-                            ->label('Matric No')
-                            ->disabled()
-                            ->dehydrated(false),
+                            ->label('Mat Number')
+                            ->disabled(),
 
                         TextInput::make('first_name')
                             ->label('First Name')
-                            ->disabled()
-                            ->dehydrated(false),
+                            ->disabled(),
 
                         TextInput::make('last_name')
-                            ->label('Last Name')
-                            ->disabled()
-                            ->dehydrated(false),
+                            ->label('Surname')
+                            ->disabled(),
 
                         TextInput::make('level')
-                            ->label('Level')
-                            ->disabled()
-                            ->dehydrated(false),
+                            ->disabled(),
 
                         TextInput::make('department')
-                            ->label('Department')
-                            ->disabled()
-                            ->dehydrated(false),
+                            ->disabled(),
                     ]),
 
-                Section::make('Editable Scores')
-                    ->description('Edit the final merged scores. Total score and grade will be recalculated automatically after saving.')
-                    ->columns(2)
+                Section::make('Scores')
+                    ->columns(3)
                     ->schema([
                         TextInput::make('test_score')
                             ->label('Test Score')
-                            ->numeric()
-                            ->minValue(0),
+                            ->numeric(),
 
                         TextInput::make('exam_score')
                             ->label('Exam Score')
-                            ->numeric()
-                            ->minValue(0),
-                    ]),
+                            ->numeric(),
 
-                Section::make('Calculated Result')
-                    ->columns(3)
-                    ->schema([
                         TextInput::make('total_score')
                             ->label('Total Score')
-                            ->disabled()
-                            ->dehydrated(false),
+                            ->disabled(),
+                    ]),
 
+                Section::make('Result Information')
+                    ->columns(3)
+                    ->schema([
                         TextInput::make('grade')
-                            ->label('Grade')
-                            ->disabled()
-                            ->dehydrated(false),
+                            ->disabled(),
 
                         TextInput::make('remark')
-                            ->label('Remark')
-                            ->disabled()
-                            ->dehydrated(false),
+                            ->disabled(),
+
+                        TextInput::make('validation_message')
+                            ->label('Issue')
+                            ->disabled(),
                     ]),
             ]);
     }
 
     public static function table(Table $table): Table
     {
-        return MergedResultsTable::configure($table)
-            ->defaultSort('is_valid', 'asc')
-            ->recordActions([
-                ViewAction::make(),
-
-                EditAction::make(),
-
-                DeleteAction::make()
-                    ->requiresConfirmation()
-                    ->modalHeading('Delete merged result?')
-                    ->modalDescription('This removes the record from final merged results and export output. It does not delete the original test or exam score records.'),
-            ])
+        return $table
+            ->striped()
+            ->defaultSort('id', 'desc')
             ->columns([
+                TextColumn::make('student_id')
+                    ->label('Student ID')
+                    ->searchable()
+                    ->sortable()
+                    ->copyable(),
+
+                TextColumn::make('full_name')
+                    ->label('Student Name')
+                    ->formatStateUsing(
+                        fn($record) => trim(
+                            $record->first_name . ' ' . $record->last_name
+                        )
+                    )
+                    ->searchable(query: function ($query, string $search) {
+                        $query
+                            ->where('first_name', 'like', "%{$search}%")
+                            ->orWhere('last_name', 'like', "%{$search}%");
+                    })
+                    ->wrap(),
+
+                TextColumn::make('matric_no')
+                    ->label('Mat Number')
+                    ->searchable()
+                    ->sortable(),
+
+                TextColumn::make('department')
+                    ->searchable()
+                    ->sortable()
+                    ->toggleable(),
+
+                TextColumn::make('level')
+                    ->sortable()
+                    ->toggleable(),
+
                 TextColumn::make('test_score')
                     ->label('Test')
                     ->numeric(decimalPlaces: 2)
-                    ->sortable()
-                    ->placeholder('Missing'),
+                    ->badge()
+                    ->color('info')
+                    ->sortable(),
 
                 TextColumn::make('exam_score')
                     ->label('Exam')
                     ->numeric(decimalPlaces: 2)
-                    ->sortable()
-                    ->placeholder('Missing'),
+                    ->badge()
+                    ->color('warning')
+                    ->sortable(),
 
                 TextColumn::make('total_score')
                     ->label('Total')
                     ->numeric(decimalPlaces: 2)
-                    ->sortable()
-                    ->placeholder('N/A'),
-
-                TextColumn::make('grade')
-                    ->label('Grade')
                     ->badge()
                     ->sortable()
-                    ->placeholder('N/A'),
+                    ->color(fn($state) => match (true) {
+                        $state >= 70 => 'success',
+                        $state >= 50 => 'warning',
+                        default => 'danger',
+                    }),
 
-                TextColumn::make('is_valid')
+                BadgeColumn::make('grade')
+                    ->colors([
+                        'success' => ['A', 'B'],
+                        'warning' => ['C'],
+                        'danger' => ['D', 'E', 'F'],
+                    ]),
+
+                BadgeColumn::make('is_valid')
                     ->label('Status')
-                    ->badge()
-                    ->sortable()
-                    ->formatStateUsing(fn(bool $state): string => $state ? 'Valid' : 'Invalid')
-                    ->color(fn(bool $state): string => $state ? 'success' : 'danger'),
+                    ->formatStateUsing(fn($state) => $state ? 'Valid' : 'Invalid')
+                    ->colors([
+                        'success' => fn($state) => $state,
+                        'danger' => fn($state) => !$state,
+                    ]),
 
                 TextColumn::make('validation_message')
                     ->label('Issue')
-                    ->searchable()
-                    ->limit(45)
-                    ->placeholder('No issue')
-                    ->toggleable(),
+                    ->default('No issue')
+                    ->limit(40)
+                    ->wrap(),
+
+                TextColumn::make('mergeBatch.name')
+                    ->label('Merge Batch')
+                    ->wrap()
+                    ->toggleable(isToggledHiddenByDefault: true),
+
+                TextColumn::make('created_at')
+                    ->label('Merged At')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
+
             ->filters([
-                SelectFilter::make('student_id')
-                    ->label('Student')
-                    ->searchable()
-                    ->options(fn(): array => MergedResult::query()
-                        ->whereNotNull('student_id')
-                        ->where('student_id', '!=', '')
-                        ->distinct()
-                        ->orderBy('student_id')
-                        ->pluck('student_id', 'student_id')
-                        ->mapWithKeys(fn($value, $key): array => [
-                            (string) $key => (string) $value,
-                        ])
-                        ->all()),
+                //
+            ])
 
-                SelectFilter::make('matric_no')
-                    ->label('Matric No')
-                    ->searchable()
-                    ->options(fn(): array => MergedResult::query()
-                        ->whereNotNull('matric_no')
-                        ->where('matric_no', '!=', '')
-                        ->distinct()
-                        ->orderBy('matric_no')
-                        ->pluck('matric_no', 'matric_no')
-                        ->mapWithKeys(fn($value, $key): array => [
-                            (string) $key => (string) $value,
-                        ])
-                        ->all()),
+            ->actions([
+                ViewAction::make(),
+                EditAction::make(),
+                DeleteAction::make(),
+            ])
 
-                SelectFilter::make('level')
-                    ->label('Level')
-                    ->searchable()
-                    ->options(fn(): array => MergedResult::query()
-                        ->whereNotNull('level')
-                        ->where('level', '!=', '')
-                        ->distinct()
-                        ->orderBy('level')
-                        ->pluck('level', 'level')
-                        ->mapWithKeys(fn($value, $key): array => [
-                            (string) $key => (string) $value,
-                        ])
-                        ->all()),
-
-                SelectFilter::make('department')
-                    ->label('Department')
-                    ->searchable()
-                    ->options(fn(): array => MergedResult::query()
-                        ->whereNotNull('department')
-                        ->where('department', '!=', '')
-                        ->distinct()
-                        ->orderBy('department')
-                        ->pluck('department', 'department')
-                        ->mapWithKeys(fn($value, $key): array => [
-                            (string) $key => (string) $value,
-                        ])
-                        ->all()),
-
-                TernaryFilter::make('is_valid')
-                    ->label('Validation Status')
-                    ->trueLabel('Valid')
-                    ->falseLabel('Invalid')
-                    ->native(false),
-                SelectFilter::make('score_issue')
-                    ->label('Score Issue')
-                    ->options([
-                        'missing_test' => 'Missing Test Score',
-                        'missing_exam' => 'Missing Exam Score',
-                        'missing_both' => 'Missing Test & Exam',
-                        'invalid_total' => 'Invalid Total Score',
-                    ])
-                    ->query(function (Builder $query, array $data): Builder {
-                        return match ($data['value'] ?? null) {
-                            'missing_test' => $query->whereNull('test_score')->whereNotNull('exam_score'),
-                            'missing_exam' => $query->whereNotNull('test_score')->whereNull('exam_score'),
-                            'missing_both' => $query->whereNull('test_score')->whereNull('exam_score'),
-                            'invalid_total' => $query
-                                ->where('is_valid', false)
-                                ->whereNotNull('test_score')
-                                ->whereNotNull('exam_score'),
-                            default => $query,
-                        };
-                    }),
-
-
+            ->bulkActions([
+                //
             ]);
     }
 
     public static function getRelations(): array
     {
-        return [
-            //
-        ];
+        return [];
     }
 
     public static function getPages(): array
